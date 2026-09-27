@@ -52,7 +52,10 @@ DEFAULT_THEME_STATUS="not-run"
 MISE_STATUS="not-run"
 CURSORS_STATUS="not-run"
 WAYTROGEN_STATUS="not-run"
+ZEN_STATUS="not-run"
 REBUILD_STATUS="not-run"
+INSTALL_START_EPOCH=0
+INSTALL_DURATION="unknown"
 MIN_HOME_FREE_MB="${AURORA_MIN_HOME_FREE_MB:-5120}"
 
 NIXOS_FLAKE_DIR="/etc/nixos"
@@ -140,6 +143,70 @@ render_banner() {
   echo -e "${WHITE}${BOLD}  NixOS Hyprland setup, tuned for Aurora${NC}"
   echo -e "${DARK}  Minimal shell noise. Clear steps. Safer install flow.${NC}"
   print_rule
+}
+
+# Work out how long the installation has been running
+compute_install_duration() {
+  local elapsed_seconds=0
+  local minutes_part=""
+  local seconds_part=""
+
+  if [ "$INSTALL_START_EPOCH" -gt 0 ]; then
+    elapsed_seconds=$(( $(date +%s) - INSTALL_START_EPOCH ))
+  fi
+
+  if [ "$elapsed_seconds" -lt 0 ]; then
+    elapsed_seconds=0
+  fi
+
+  if [ "$(( elapsed_seconds / 60 ))" -eq 0 ]; then
+    seconds_part="$elapsed_seconds second"
+  elif [ "$(( elapsed_seconds % 60 ))" -eq 0 ]; then
+    minutes_part="$(( elapsed_seconds / 60 )) minute"
+  else
+    minutes_part="$(( elapsed_seconds / 60 )) minute"
+    seconds_part="$(( elapsed_seconds % 60 )) second"
+  fi
+
+  if [ -n "$minutes_part" ]; then
+    if [ "$(( elapsed_seconds / 60 ))" -ne 1 ]; then
+      minutes_part="${minutes_part}s"
+    fi
+  fi
+
+  if [ -n "$seconds_part" ]; then
+    if [ "$(( elapsed_seconds % 60 ))" -ne 1 ]; then
+      seconds_part="${seconds_part}s"
+    fi
+  fi
+
+  if [ -z "$minutes_part" ]; then
+    INSTALL_DURATION="$seconds_part"
+  elif [ -z "$seconds_part" ]; then
+    INSTALL_DURATION="$minutes_part"
+  else
+    INSTALL_DURATION="$minutes_part $seconds_part"
+  fi
+}
+
+render_completion() {
+  compute_install_duration
+
+  echo ""
+  print_rule
+  echo -e "${MAGENTA}${BOLD} █████╗ ██╗   ██╗██████╗  █████╗ █████╗     ██████╗ ██╗    ██╗${NC}"
+  echo -e "${BLUE}${BOLD}██╔══██╗██║   ██║██╔══██╗██╔═══██╗██╔══██╗   ██╔══██╗██║    ██║${NC}"
+  echo -e "${CYAN}${BOLD}███████║██║   ██║██████╔╝██║   ██║███████║   ██║  ██║██║ █╗ ██║${NC}"
+  echo -e "${GREEN}${BOLD}██╔══██║██║   ██║██╔══██╗██║   ██║██╔══██║   ██║  ██║██║███╗██║${NC}"
+  echo -e "${YELLOW}${BOLD}██║  ██║███████║██║  ██║╚██████╔╝██║  ██║   ██████╔╝╚███╔███╔╝${NC}"
+  echo -e "${DARK}${BOLD}╚═╝  ╚═╝╚══════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═════╝  ╚══╝╚══╝ ${NC}"
+  print_rule
+  echo -e "  ${GREEN}${BOLD}✓ Installation Completed${NC}"
+  echo -e "  ${WHITE}Installed in ${CYAN}${BOLD}${INSTALL_DURATION}${NC}"
+  print_rule
+  echo ""
+
+  log_success "Installation completed in $INSTALL_DURATION"
 }
 
 print_header() {
@@ -435,6 +502,8 @@ rotate_logs() {
 
 prepare_install_log() {
   local log_dir
+
+  INSTALL_START_EPOCH="$(date +%s)"
 
   log_dir="$(dirname "$INSTALL_LOG")"
   mkdir -p "$log_dir"
@@ -1090,6 +1159,105 @@ install_nordzy_cursors() {
   log_info "Nordzy hyprcursors installed into \$HOME/.local/share/icons"
 }
 
+# Add the zen-browser alias to every shell config that exists
+add_zen_browser_alias() {
+  local posix_alias='alias zen-browser="flatpak run app.zen_browser.zen"'
+  local fish_alias='alias zen-browser "flatpak run app.zen_browser.zen"'
+  local fish_config="$HOME/.config/fish/config.fish"
+  local shell_name
+  local rc_file
+  local alias_added=false
+  local alias_present=false
+
+  shell_name="$(basename "${SHELL:-}")"
+
+  if [ "$shell_name" = "fish" ] && [ ! -f "$fish_config" ]; then
+    mkdir -p "$(dirname "$fish_config")"
+    touch "$fish_config"
+  fi
+
+  for rc_file in "$HOME/.bashrc" "$HOME/.zshrc" "$fish_config"; do
+    [ -f "$rc_file" ] || continue
+
+    if grep -q "alias zen-browser" "$rc_file"; then
+      alias_present=true
+      continue
+    fi
+
+    echo "" >>"$rc_file"
+    echo "# Aurora binaries" >>"$rc_file"
+    if [ "$rc_file" = "$fish_config" ]; then
+      echo "$fish_alias" >>"$rc_file"
+    else
+      echo "$posix_alias" >>"$rc_file"
+    fi
+    alias_added=true
+    log_command "Added the zen-browser alias to $rc_file"
+  done
+
+  if [ "$alias_added" = true ]; then
+    print_success "Added the zen-browser alias to your shell config"
+  elif [ "$alias_present" = true ]; then
+    print_success "The zen-browser alias is already in your shell config"
+  else
+    print_warning "No shell config was updated with the zen-browser alias"
+    echo "  Add it manually: alias zen-browser=\"flatpak run app.zen_browser.zen\""
+    log_warn "Skipped writing the zen-browser alias because no shell config was available"
+  fi
+}
+
+# Install Zen browser from Flathub and alias it to `zen-browser`
+install_zen_browser() {
+  next_step "Installing Zen browser"
+
+  local flathub_url="https://dl.flathub.org/repo/flathub.flatpakrepo"
+  local zen_app="app.zen_browser.zen"
+
+  if [ "$DRY_RUN" = true ]; then
+    ZEN_STATUS="dry-run"
+    print_warning "[DRY RUN] Would run: flatpak remote-add --if-not-exists flathub $flathub_url"
+    print_warning "[DRY RUN] Would run: flatpak install -y flathub $zen_app"
+    print_warning "[DRY RUN] Would alias zen-browser to 'flatpak run $zen_app'"
+    return 0
+  fi
+
+  if ! command -v flatpak &>/dev/null; then
+    ZEN_STATUS="failed: flatpak not found"
+    print_error "flatpak is required to install Zen browser"
+    log_error "flatpak was not found in PATH"
+    return 1
+  fi
+
+  print_warning "Adding the Flathub remote..."
+  if ! flatpak remote-add --if-not-exists flathub "$flathub_url"; then
+    ZEN_STATUS="failed: could not add the flathub remote"
+    print_error "Could not add the Flathub remote"
+    log_error "flatpak remote-add --if-not-exists flathub $flathub_url failed"
+    return 1
+  fi
+  log_command "Flathub remote is available at $flathub_url"
+
+  if flatpak info "$zen_app" &>/dev/null; then
+    ZEN_STATUS="already installed"
+    print_success "Zen browser is already installed"
+  else
+    print_warning "Installing Zen browser from Flathub, this can take a while..."
+    if ! flatpak install -y --noninteractive flathub "$zen_app"; then
+      ZEN_STATUS="failed: installation failed"
+      print_error "Zen browser installation failed"
+      log_error "flatpak install -y flathub $zen_app failed"
+      return 1
+    fi
+    ZEN_STATUS="installed"
+    print_success "Zen browser installed from Flathub"
+  fi
+
+  add_zen_browser_alias
+
+  print_warning "Run 'zen-browser' to launch it (reload your shell first if the alias is not found)"
+  log_info "Zen browser is installed as a per-user flatpak; launch it with 'zen-browser'"
+}
+
 move_to_backup() {
   local source_path="$1"
   local backup_path="$2"
@@ -1499,6 +1667,7 @@ final_setup() {
   echo -e "  ${CYAN}•${NC} ${WHITE}waytrogen-aurora:${NC} ${YELLOW}${WAYTROGEN_STATUS}${NC}"
   echo -e "  ${CYAN}•${NC} ${WHITE}mise:${NC} ${YELLOW}${MISE_STATUS}${NC}"
   echo -e "  ${CYAN}•${NC} ${WHITE}Nordzy cursors:${NC} ${YELLOW}${CURSORS_STATUS}${NC}"
+  echo -e "  ${CYAN}•${NC} ${WHITE}Zen browser (flatpak):${NC} ${YELLOW}${ZEN_STATUS}${NC}"
   echo -e "  ${GREEN}✓${NC} ${WHITE}LazyVim starter installed to ~/.config/nvim${NC}"
   echo -e "  ${GREEN}✓${NC} ${WHITE}Configuration files installed${NC}"
   echo -e "  ${GREEN}✓${NC} ${WHITE}Shell environment configured${NC}"
@@ -1507,11 +1676,13 @@ final_setup() {
   echo ""
 
   # Save installation state
+  compute_install_duration
   cat >"$INSTALL_STATE_FILE" <<STATE_EOF
 {
   "version": "1.0",
   "install_type": "$DETECTED_INSTALL_TYPE",
   "install_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "install_duration": "$INSTALL_DURATION",
   "script_version": "$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo 'unknown')",
   "nixos_rebuild_status": "$REBUILD_STATUS",
   "hyprland_runtime_detected": "$(detect_hyprland_runtime && echo 'true' || echo 'false')"
@@ -1613,6 +1784,7 @@ What it does:
   6. Clones, builds and installs waytrogen-aurora in the dev shell
   7. Installs mise (curl -fsSL https://mise.run | sh)
   8. Installs the Nordzy hyprcursors (./install.sh -P)
+  9. Adds the Flathub remote, installs Zen browser and aliases it to zen-browser
 
 EOF
 }
@@ -1689,6 +1861,7 @@ main() {
     install_waytrogen_aurora
     install_mise
     install_nordzy_cursors
+    install_zen_browser
     setup_lazyvim
     setup_shell_config
     verify_installation
@@ -1711,6 +1884,10 @@ main() {
     next_step "Installing Nordzy hyprcursors"
     CURSORS_STATUS="dry-run: would run ./install.sh -P"
     print_warning "[DRY RUN] Would clone Nordzy-cursors and run ./install.sh -P"
+
+    next_step "Installing Zen browser"
+    ZEN_STATUS="dry-run: would install app.zen_browser.zen from Flathub"
+    print_warning "[DRY RUN] Would add the Flathub remote, install app.zen_browser.zen and alias zen-browser"
 
     next_step "Installing LazyVim starter"
     print_warning "[DRY RUN] Would backup Neovim files and install LazyVim starter"
@@ -1735,6 +1912,8 @@ main() {
     next_step "Applying Aurora theme"
     print_warning "[DRY RUN] Would apply Aurora theme - Aurora Default"
   fi
+
+  render_completion
 
   log_command "Aurora NixOS Installation Completed Successfully"
 }
