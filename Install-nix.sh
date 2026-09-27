@@ -825,6 +825,11 @@ install_rust_packages() {
     [cargo_tools]="
           termflix
           nmrs-tui
+          leenfetch
+          jolt-tui
+          bluetui
+          weathr
+          
         "
   )
 
