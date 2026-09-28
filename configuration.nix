@@ -2,7 +2,11 @@
 # your system.  Help is available in the configuration.nix(5) man page
 # and in the NixOS manual (accessible by running ‘nixos-help’).
 
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
+
+let
+  vars = import ./variables.nix { inherit lib; };
+in
 
 {
   imports = [
@@ -75,10 +79,15 @@
   # Configure console keymap
   console.keyMap = "uk";
 
-  # Define a user account. Don't forget to set a password with ‘passwd’.
-  users.users.ahummaitra = {
+  # Never reset passwords on activation: an account that already exists keeps
+  # the password hash stored in /etc/shadow.
+  users.mutableUsers = true;
+
+  # Define a user account. No password is declared here on purpose, the
+  # existing account in variables.nix keeps the one you already set.
+  users.users.${vars.username} = {
     isNormalUser = true;
-    description = "Ahum Maitra";
+    description = "Firstname Lastname";
     shell = pkgs.fish;
     extraGroups = [
       "networkmanager"
@@ -150,7 +159,7 @@
       brightnessctl
       wiremix
       evince
-      xfce.parole
+      parole
       eog
     ];
   };

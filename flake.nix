@@ -21,6 +21,7 @@
     }:
     let
       system = "x86_64-linux";
+      vars = import ./variables.nix { lib = nixpkgs.lib; };
       pkgs = import nixpkgs {
         inherit system;
         config.allowUnfree = true;
@@ -43,7 +44,7 @@
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
 
-            home-manager.users.ahummaitra = ./home.nix;
+            home-manager.users.${vars.username} = ./home.nix;
           }
         ];
       };

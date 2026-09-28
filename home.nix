@@ -1,8 +1,12 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
+
+let
+  vars = import ./variables.nix { inherit lib; };
+in
 
 {
-  home.username = "ahummaitra";
-  home.homeDirectory = "/home/ahummaitra";
+  home.username = vars.username;
+  home.homeDirectory = "/home/${vars.username}";
 
   home.stateVersion = "26.11";
 
